@@ -31,8 +31,9 @@ public sealed unsafe partial class ByteString : IDisposable
 
     /// <summary> Create a temporary ByteString from a byte pointer. </summary>
     /// <param name="path">A pointer to an existing string.</param>
+    /// <param name="maxLength"> The maximum length until it stops looking for a null-terminator. </param>
     /// <remarks> This computes CRC, checks for ASCII and AsciiLower and assumes Null-Termination. </remarks>
-    public ByteString(byte* path)
+    public ByteString(byte* path, int maxLength = int.MaxValue)
     {
         if (path == null)
         {
@@ -42,10 +43,20 @@ public sealed unsafe partial class ByteString : IDisposable
         }
         else
         {
-            var length = ByteStringFunctions.ComputeCrc32AsciiLowerAndSize(path, out var crc32, out var lower, out var ascii);
-            Setup(path, length, crc32, true, false, lower, ascii);
+            var length = ByteStringFunctions.ComputeCrc32AsciiLowerAndSize(path, out var crc32, out var lower, out var ascii, out var nullTerminated, maxLength);
+            Setup(path, length, crc32, nullTerminated, false, lower, ascii);
         }
     }
+
+    /// <summary> Create a temporary ByteString from a byte span. </summary>
+    /// <param name="path">A null-terminated span of an existing string.</param>
+    /// <remarks>
+    /// This computes CRC, checks for ASCII and AsciiLower and assumes Null-Termination.
+    /// </remarks>
+    public ByteString(Span<byte> path)
+        : this(path.Length == 0 ? null : (byte*) Unsafe.AsPointer(ref path[0]), path.Length)
+    { }
+
 
     /// <summary>
     /// Construct a temporary ByteString from a given byte string of known size. 
@@ -55,12 +66,13 @@ public sealed unsafe partial class ByteString : IDisposable
     /// <param name="isNullTerminated">Whether the string is known to be null-terminated or not.</param>
     /// <param name="isLower">Optionally, whether the string is known to only contain (ASCII) lower-case characters.</param>
     /// <param name="isAscii">Optionally, whether the string is known to only contain ASCII characters.</param>
+    /// <param name="crc32">Optionally, the known CRC32 hash of the string.</param>
     /// <exception cref="ArgumentOutOfRangeException">If length is larger than <inheritdoc cref="MaxLength"/>.</exception>
     /// <remarks>Always computes the CRC32 for the path.</remarks>
-    public static ByteString FromByteStringUnsafe(byte* path, int length, bool isNullTerminated, bool? isLower = null, bool? isAscii = false)
-        => new ByteString().Setup(path, length, null, isNullTerminated, false, isLower, isAscii);
+    public static ByteString FromByteStringUnsafe(byte* path, int length, bool isNullTerminated, bool? isLower = null, bool? isAscii = false, int? crc32 = null)
+        => new ByteString().Setup(path, length, crc32, isNullTerminated, false, isLower, isAscii);
 
-    /// <inheritdoc cref="FromByteStringUnsafe(byte*, int, bool, bool?, bool?)"/>
+    /// <inheritdoc cref="FromByteStringUnsafe(byte*, int, bool, bool?, bool?, int?)"/>
     public static ByteString FromSpanUnsafe(ReadOnlySpan<byte> path, bool isNullTerminated, bool? isLower = null, bool? isAscii = false)
     {
         fixed (byte* ptr = path)
@@ -120,8 +132,7 @@ public sealed unsafe partial class ByteString : IDisposable
         if (!IsOwned)
             return;
 
-        Marshal.FreeHGlobal((IntPtr)_path);
-        GC.RemoveMemoryPressure(Length + 1);
+        PenumbraStringMemory.Free(_path, Length + 1);
         _length = AsciiCheckedFlag | AsciiFlag | AsciiLowerCheckedFlag | AsciiLowerFlag | NullTerminatedFlag;
         _path   = Null.NullBytePtr;
         _crc32  = 0;
@@ -156,10 +167,7 @@ public sealed unsafe partial class ByteString : IDisposable
             _length |= NullTerminatedFlag;
 
         if (isOwned)
-        {
-            GC.AddMemoryPressure(length + 1);
             _length |= OwnedFlag;
-        }
 
         if (isLower != null)
         {

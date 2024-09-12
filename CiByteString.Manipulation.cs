@@ -3,7 +3,7 @@ using ByteStringFunctions = Penumbra.String.Functions.ByteStringFunctions;
 
 namespace Penumbra.String;
 
-public sealed unsafe partial class ByteString
+public sealed unsafe partial class CiByteString
 {
     /// <summary>
     /// Create a C# UTF16 string from this string.
@@ -14,7 +14,7 @@ public sealed unsafe partial class ByteString
             return string.Empty;
 
         // If the string is known to be pure ASCII, use that encoding, otherwise UTF8.
-        if ((_length & AsciiFlag) != 0)
+        if (IsAsciiInternal ?? false)
             return Encoding.ASCII.GetString(_path, Length);
 
         return Encoding.UTF8.GetString(_path, Length);
@@ -23,16 +23,17 @@ public sealed unsafe partial class ByteString
 
     /// <summary> Convert the ASCII portion of the string to lowercase. </summary>
     /// <remarks>Only creates a new string and copy if the string is not already known to be lower case.</remarks>
-    public ByteString AsciiToLower()
-        => (_length & AsciiLowerFlag) == 0
-            ? new ByteString().Setup(ByteStringFunctions.AsciiToLower(_path, Length), Length, null, true, true, true, IsAsciiInternal)
+    public CiByteString AsciiToLower()
+        => IsAsciiLowerInternal ?? true
+            ? new CiByteString().Setup(ByteStringFunctions.AsciiToLower(_path, Length), Length, CiCrc32Internal, null, true, true, true,
+                IsAsciiInternal)
             : this;
 
     /// <summary>
     /// Convert the ascii portion of the string to mixed case (i.e. capitalize every first letter in a word)
     /// </summary>
     /// <remarks>Always creates an owned copy of the string.</remarks>
-    public ByteString AsciiToMixed()
+    public CiByteString AsciiToMixed()
     {
         var length = Length;
         if (length == 0)
@@ -54,31 +55,40 @@ public sealed unsafe partial class ByteString
 
     /// <summary> Convert the ASCII portion of the string to lowercase. </summary>
     /// <remarks>Guaranteed to create an owned copy.</remarks>
-    public ByteString AsciiToLowerClone()
-        => (_length & AsciiLowerFlag) == 0
-            ? new ByteString().Setup(ByteStringFunctions.AsciiToLower(_path, Length), Length, null, true, true, true, IsAsciiInternal)
+    public CiByteString AsciiToLowerClone()
+        => IsAsciiInternal ?? true
+            ? new CiByteString().Setup(ByteStringFunctions.AsciiToLower(_path, Length), Length, CiCrc32Internal, null, true, true, true,
+                IsAsciiInternal)
             : Clone();
 
     /// <summary> Create an owned copy of the given string. </summary>
-    public ByteString Clone()
+    public CiByteString Clone()
     {
         if (IsEmpty)
             return Empty;
 
-        var ret = new ByteString();
-        ret._length = _length | OwnedFlag | NullTerminatedFlag;
-        ret._path   = ByteStringFunctions.CopyString(Path, Length);
-        ret._crc32  = Crc32;
+        var ret = new CiByteString();
+        ret._flags   = _flags | Flags.Owned | Flags.NullTerminated;
+        ret._length  = _length;
+        ret._path    = ByteStringFunctions.CopyString(Path, Length);
+        ret._crc32   = _crc32;
+        ret._ciCrc32 = _ciCrc32;
         return ret;
     }
 
     /// <summary> Create a non-owning substring from the given position. </summary>
     /// <param name="from">The starting position.</param>
     /// <remarks>If from is negative or too large, the returned string will be the empty string.</remarks>
-    public ByteString Substring(int from)
-        => (uint)from < Length
-            ? FromByteStringUnsafe(_path + from, Length - from, IsNullTerminated, IsAsciiLowerInternal, IsAsciiInternal)
+    public CiByteString Substring(int from)
+    {
+        if (from == 0)
+            return this;
+
+        return (uint)from < Length
+            ? new CiByteString().Setup(_path + from, _length - from, null, null, IsNullTerminated, false,
+                _flags.HasFlag(Flags.AsciiLowerCase) ? true : null, _flags.HasFlag(Flags.Ascii) ? true : null)
             : Empty;
+    }
 
     /// <summary>
     /// Create a non-owning substring from the given position of the given length.
@@ -87,19 +97,23 @@ public sealed unsafe partial class ByteString
     /// <param name="length">The total length.</param>
     /// <remarks> If from is negative or too large, the returned string will be the empty string. <br/>
     /// If from + length is too large, it will be the same as if length was not specified.</remarks>
-    public ByteString Substring(int from, int length)
+    public CiByteString Substring(int from, int length)
     {
+        if (from == 0 && length == Length)
+            return this;
+
         var maxLength = Length - (uint)from;
         if (maxLength <= 0)
             return Empty;
 
         return length < maxLength
-            ? FromByteStringUnsafe(_path + from, length, false, IsAsciiLowerInternal, IsAsciiInternal)
+            ? new CiByteString().Setup(_path + from, length, null, null, false, false,
+                _flags.HasFlag(Flags.AsciiLowerCase) ? true : null, _flags.HasFlag(Flags.Ascii) ? true : null)
             : Substring(from);
     }
 
     /// <summary> Trim all ascii whitespace characters from the front. </summary>
-    public ByteString TrimFront()
+    public CiByteString TrimFront()
     {
         if (IsEmpty)
             return Empty;
@@ -115,11 +129,12 @@ public sealed unsafe partial class ByteString
         if (ptr == end)
             return Empty;
 
-        return FromByteStringUnsafe(ptr, (int)(end - ptr), IsNullTerminated, IsAsciiLowerInternal, IsAsciiInternal);
+        return new CiByteString().Setup(ptr, (int)(end - ptr), null, null, IsNullTerminated, false,
+            IsAsciiLowerInternal, IsAsciiInternal);
     }
 
     /// <summary> Trim all ascii whitespace characters at the end. </summary>
-    public ByteString TrimEnd()
+    public CiByteString TrimEnd()
     {
         if (IsEmpty)
             return Empty;
@@ -135,24 +150,36 @@ public sealed unsafe partial class ByteString
         if (ptr < end)
             return Empty;
 
-        return FromByteStringUnsafe(_path, (int)(ptr - _path), false, IsAsciiLowerInternal, IsAsciiInternal);
+        return new CiByteString().Setup(_path, (int)(ptr - _path), null, null, false, false,
+            IsAsciiLowerInternal, IsAsciiInternal);
     }
 
     /// <summary> Trim all ascii whitespace characters from the beginning or end of the string. </summary>
-    public ByteString Trim()
+    public CiByteString Trim()
         => TrimFront().TrimEnd();
 
     /// <summary>
-    /// Create a owned copy of the string and replace all occurrences of from with to in it.
+    /// Create an owned copy of the string and replace all occurrences of from with to in it.
     /// </summary>
     /// <param name="from">The byte to replace.</param>
     /// <param name="to">The byte <paramref name="from"/> is to be replaced with.</param>
-    public ByteString Replace(byte from, byte to)
+    public CiByteString Replace(byte from, byte to)
     {
         var length      = Length;
         var newPtr      = ByteStringFunctions.CopyString(_path, length);
         var numReplaced = ByteStringFunctions.Replace(newPtr, length, from, to);
-        return new ByteString().Setup(newPtr, length, numReplaced == 0 ? _crc32 : null, true, true, IsAsciiLowerInternal, IsAsciiInternal);
+        if (numReplaced == 0)
+            new CiByteString().Setup(newPtr, length, CiCrc32Internal, Crc32Internal, true, true, IsAsciiLowerInternal, IsAsciiInternal);
+
+        var lower = IsAsciiLowerInternal;
+        if (!ByteStringFunctions.AsciiIsLower(to))
+            lower = false;
+
+        var ascii = IsAsciiInternal;
+        if (to >= 0xF0)
+            ascii = false;
+
+        return new CiByteString().Setup(newPtr, length, null, null, true, true, lower, ascii);
     }
 
     /// <summary>
@@ -161,7 +188,7 @@ public sealed unsafe partial class ByteString
     /// <param name="splitter">The byte to insert between all strings.</param>
     /// <param name="strings">The list of strings to join.</param>
     /// <remarks>No <paramref name="splitter"/> is inserted before the first or after the last string.</remarks>
-    public static ByteString Join(byte splitter, params ByteString[] strings)
+    public static CiByteString Join(byte splitter, params CiByteString[] strings)
     {
         var length = strings.Sum(s => s.Length) + strings.Length;
         var data   = PenumbraStringMemory.Allocate(length);
@@ -180,16 +207,15 @@ public sealed unsafe partial class ByteString
 
         --length;
         data[length] = 0;
-        var ret = FromByteStringUnsafe(data, length, true, isLower, isAscii);
-        ret._length |= OwnedFlag;
-        return ret;
+
+        return new CiByteString().Setup(data, length, null, null, true, true, isLower, isAscii);
     }
 
     /// <summary>
     /// Join a number of strings with a given byte between them.
     /// </summary>
     /// <param name="strings">The list of strings to join.</param>
-    public static ByteString Join(params ByteString[] strings)
+    public static CiByteString Join(params CiByteString[] strings)
     {
         var length = strings.Sum(s => s.Length);
         var data   = PenumbraStringMemory.Allocate(length + 1);
@@ -206,9 +232,7 @@ public sealed unsafe partial class ByteString
         }
 
         data[length] = 0;
-        var ret = FromByteStringUnsafe(data, length, true, isLower, isAscii);
-        ret._length |= OwnedFlag;
-        return ret;
+        return new CiByteString().Setup(data, length, null, null, true, true, isLower, isAscii);
     }
 
     /// <summary>
@@ -218,9 +242,9 @@ public sealed unsafe partial class ByteString
     /// <param name="maxSplits">An optional maximum number of splits - if the maximum is reached, the last substring may contain delimiters.</param>
     /// <param name="removeEmpty">Remove all empty substrings between delimiters, they are also not counted for <paramref name="maxSplits"/>.</param>
     /// <remarks>The returned substrings are not owned.</remarks>
-    public List<ByteString> Split(byte b, int maxSplits = int.MaxValue, bool removeEmpty = true)
+    public List<CiByteString> Split(byte b, int maxSplits = int.MaxValue, bool removeEmpty = true)
     {
-        var ret   = new List<ByteString>();
+        var ret   = new List<CiByteString>();
         var start = 0;
         for (var idx = IndexOf(b, start); idx >= 0; idx = IndexOf(b, start))
         {
