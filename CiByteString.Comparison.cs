@@ -1,4 +1,3 @@
-using System.Text.Unicode;
 using Penumbra.String.Functions;
 
 namespace Penumbra.String;
