@@ -1,10 +1,10 @@
-<Project Sdk="Dalamud.NET.Sdk/14.0.2">
+<Project Sdk="Dalamud.NET.Sdk/15.0.0">
     <PropertyGroup>
         <AssemblyTitle>ByteString</AssemblyTitle>
         <Copyright>Copyright © 2025</Copyright>
         <FileVersion>1.0.0.0</FileVersion>
         <AssemblyVersion>1.0.0.0</AssemblyVersion>
-        <PackageVersion>1.0.7</PackageVersion>
+        <PackageVersion>1.0.8</PackageVersion>
         <PackageReadmeFile>README.md</PackageReadmeFile>
         <OutputPath>bin\$(Configuration)\</OutputPath>
         <SuppressNETCoreSdkPreviewMessage>true</SuppressNETCoreSdkPreviewMessage>
