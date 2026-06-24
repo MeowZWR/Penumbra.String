@@ -348,7 +348,7 @@ public sealed unsafe partial class CiByteString : IDisposable
         if (_flags.HasFlag(Flags.HasCrc32))
             return _crc32;
 
-        ByteStringFunctions.ComputeCrc32AndSize(_path, out _crc32, out _);
+        ByteStringFunctions.ComputeCrc32AndSize(_path, out _crc32, out _, _length);
         _flags |= Flags.HasCrc32;
         return _crc32;
     }
@@ -358,7 +358,7 @@ public sealed unsafe partial class CiByteString : IDisposable
         if (_flags.HasFlag(Flags.HasCiCrc32))
             return _ciCrc32;
 
-        ByteStringFunctions.ComputeCiCrc32AndSize(_path, out _ciCrc32, out _);
+        ByteStringFunctions.ComputeCiCrc32AndSize(_path, out _ciCrc32, out _, _length);
         _flags |= Flags.HasCiCrc32;
         return _ciCrc32;
     }
